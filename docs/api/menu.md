@@ -1,5 +1,6 @@
 ## Class: Menu
 
+
 > Create native application menus and context menus.
 
 Process: [Main](../glossary.md#main-process)
@@ -88,6 +89,12 @@ Closes the context menu in the `browserWindow`.
 
 Appends the `menuItem` to the menu.
 
+#### `menu.getMenuItemById(id)`
+
+* `id` String
+
+Returns `MenuItem` the item with the specified `id`
+
 #### `menu.insert(pos, menuItem)`
 
 * `pos` Integer
@@ -101,7 +108,7 @@ Inserts the `menuItem` to the `pos` position of the menu.
 
 #### `menu.items`
 
-A MenuItem[] array containing the menu's items.
+A `MenuItem[]` array containing the menu's items.
 
 Each `Menu` consists of multiple [`MenuItem`](menu-item.md)s and each `MenuItem`
 can have a submenu.

@@ -82,17 +82,17 @@ void FlipWindowStyle(HWND handle, bool on, DWORD flag) {
 #endif
 
 bool IsAltKey(const content::NativeWebKeyboardEvent& event) {
-  return event.windowsKeyCode == ui::VKEY_MENU;
+  return event.windows_key_code == ui::VKEY_MENU;
 }
 
 bool IsAltModifier(const content::NativeWebKeyboardEvent& event) {
   typedef content::NativeWebKeyboardEvent::Modifiers Modifiers;
-  int modifiers = event.modifiers();
-  modifiers &= ~Modifiers::NumLockOn;
-  modifiers &= ~Modifiers::CapsLockOn;
-  return (modifiers == Modifiers::AltKey) ||
-         (modifiers == (Modifiers::AltKey | Modifiers::IsLeft)) ||
-         (modifiers == (Modifiers::AltKey | Modifiers::IsRight));
+  int modifiers = event.GetModifiers();
+  modifiers &= ~Modifiers::kNumLockOn;
+  modifiers &= ~Modifiers::kCapsLockOn;
+  return (modifiers == Modifiers::kAltKey) ||
+         (modifiers == (Modifiers::kAltKey | Modifiers::kIsLeft)) ||
+         (modifiers == (Modifiers::kAltKey | Modifiers::kIsRight));
 }
 
 #if defined(USE_X11)
@@ -304,11 +304,16 @@ NativeWindowViews::NativeWindowViews(
   ::SetWindowLong(GetAcceleratedWidget(), GWL_EXSTYLE, ex_style);
 #endif
 
-  // TODO(zcbenz): This was used to force using native frame on Windows 2003, we
-  // should check whether setting it in InitParams can work.
   if (has_frame()) {
+    // TODO(zcbenz): This was used to force using native frame on Windows 2003,
+    // we should check whether setting it in InitParams can work.
     window_->set_frame_type(views::Widget::FrameType::FRAME_TYPE_FORCE_NATIVE);
     window_->FrameTypeChanged();
+#if defined(OS_WIN)
+    // thickFrame also works for normal window.
+    if (!thick_frame_)
+      FlipWindowStyle(GetAcceleratedWidget(), false, WS_THICKFRAME);
+#endif
   }
 
   gfx::Size size = bounds.size();
@@ -334,6 +339,11 @@ NativeWindowViews::NativeWindowViews(
 
 NativeWindowViews::~NativeWindowViews() {
   window_->RemoveObserver(this);
+
+#if defined(OS_WIN)
+  // Disable mouse forwarding to relinquish resources, should any be held.
+  SetForwardMouseMessages(false);
+#endif
 }
 
 void NativeWindowViews::Close() {
@@ -374,7 +384,8 @@ bool NativeWindowViews::IsFocused() {
 }
 
 void NativeWindowViews::Show() {
-  if (is_modal() && NativeWindow::parent())
+  if (is_modal() && NativeWindow::parent() &&
+      !window_->native_widget_private()->IsVisible())
     static_cast<NativeWindowViews*>(NativeWindow::parent())->SetEnabled(false);
 
   window_->native_widget_private()->ShowWithWindowState(GetRestoredState());
@@ -571,6 +582,12 @@ gfx::Size NativeWindowViews::GetContentSize() {
 void NativeWindowViews::SetContentSizeConstraints(
     const extensions::SizeConstraints& size_constraints) {
   NativeWindow::SetContentSizeConstraints(size_constraints);
+#if defined(OS_WIN)
+  // Changing size constraints would force adding the WS_THICKFRAME style, so
+  // do nothing if thickFrame is false.
+  if (!thick_frame_)
+    return;
+#endif
   // widget_delegate() is only available after Init() is called, we make use of
   // this to determine whether native widget has initialized.
   if (window_ && window_->widget_delegate())
@@ -583,7 +600,7 @@ void NativeWindowViews::SetContentSizeConstraints(
 
 void NativeWindowViews::SetResizable(bool resizable) {
 #if defined(OS_WIN)
-  if (has_frame())
+  if (has_frame() && thick_frame_)
     FlipWindowStyle(GetAcceleratedWidget(), resizable, WS_THICKFRAME);
 #elif defined(USE_X11)
   if (resizable != resizable_) {
@@ -753,6 +770,14 @@ void NativeWindowViews::SetSkipTaskbar(bool skip) {
 #endif
 }
 
+void NativeWindowViews::SetSimpleFullScreen(bool simple_fullscreen) {
+  SetFullScreen(simple_fullscreen);
+}
+
+bool NativeWindowViews::IsSimpleFullScreen() {
+  return IsFullscreen();
+}
+
 void NativeWindowViews::SetKiosk(bool kiosk) {
   SetFullScreen(kiosk);
 }
@@ -789,7 +814,7 @@ bool NativeWindowViews::HasShadow() {
       != wm::ShadowElevation::NONE;
 }
 
-void NativeWindowViews::SetIgnoreMouseEvents(bool ignore) {
+void NativeWindowViews::SetIgnoreMouseEvents(bool ignore, bool forward) {
 #if defined(OS_WIN)
   LONG ex_style = ::GetWindowLong(GetAcceleratedWidget(), GWL_EXSTYLE);
   if (ignore)
@@ -797,6 +822,13 @@ void NativeWindowViews::SetIgnoreMouseEvents(bool ignore) {
   else
     ex_style &= ~(WS_EX_TRANSPARENT | WS_EX_LAYERED);
   ::SetWindowLong(GetAcceleratedWidget(), GWL_EXSTYLE, ex_style);
+
+  // Forwarding is always disabled when not ignoring mouse messages.
+  if (!ignore) {
+    SetForwardMouseMessages(false);
+  } else {
+    SetForwardMouseMessages(forward);
+  }
 #elif defined(USE_X11)
   if (ignore) {
     XRectangle r = {0, 0, 1, 1};
@@ -1089,9 +1121,31 @@ void NativeWindowViews::OnWidgetBoundsChanged(
   if (widget != window_.get())
     return;
 
-  if (widget_size_ != bounds.size()) {
+  // Note: We intentionally use `GetBounds()` instead of `bounds` to properly
+  // handle minimized windows on Windows.
+  const auto new_bounds = GetBounds();
+  if (widget_size_ != new_bounds.size()) {
+    if (browser_view_) {
+      const auto flags = static_cast<NativeBrowserViewViews*>(browser_view_)
+                             ->GetAutoResizeFlags();
+      int width_delta = 0;
+      int height_delta = 0;
+      if (flags & kAutoResizeWidth) {
+        width_delta = new_bounds.width() - widget_size_.width();
+      }
+      if (flags & kAutoResizeHeight) {
+        height_delta = new_bounds.height() - widget_size_.height();
+      }
+
+      auto* view = browser_view_->GetInspectableWebContentsView()->GetView();
+      auto new_view_size = view->size();
+      new_view_size.set_width(new_view_size.width() + width_delta);
+      new_view_size.set_height(new_view_size.height() + height_delta);
+      view->SetSize(new_view_size);
+    }
+
     NotifyWindowResize();
-    widget_size_ = bounds.size();
+    widget_size_ = new_bounds.size();
   }
 }
 
@@ -1251,15 +1305,15 @@ void NativeWindowViews::HandleKeyboardEvent(
   // Show accelerator when "Alt" is pressed.
   if (menu_bar_visible_ && IsAltKey(event))
     menu_bar_->SetAcceleratorVisibility(
-        event.type() == blink::WebInputEvent::RawKeyDown);
+        event.GetType() == blink::WebInputEvent::kRawKeyDown);
 
   // Show the submenu when "Alt+Key" is pressed.
-  if (event.type() == blink::WebInputEvent::RawKeyDown && !IsAltKey(event) &&
-      IsAltModifier(event)) {
+  if (event.GetType() == blink::WebInputEvent::kRawKeyDown &&
+      !IsAltKey(event) && IsAltModifier(event)) {
     if (!menu_bar_visible_ &&
-        (menu_bar_->GetAcceleratorIndex(event.windowsKeyCode) != -1))
+        (menu_bar_->GetAcceleratorIndex(event.windows_key_code) != -1))
       SetMenuBarVisibility(true);
-    menu_bar_->ActivateAccelerator(event.windowsKeyCode);
+    menu_bar_->ActivateAccelerator(event.windows_key_code);
     return;
   }
 
@@ -1267,11 +1321,11 @@ void NativeWindowViews::HandleKeyboardEvent(
     return;
 
   // Toggle the menu bar only when a single Alt is released.
-  if (event.type() == blink::WebInputEvent::RawKeyDown && IsAltKey(event)) {
+  if (event.GetType() == blink::WebInputEvent::kRawKeyDown && IsAltKey(event)) {
     // When a single Alt is pressed:
     menu_bar_alt_pressed_ = true;
-  } else if (event.type() == blink::WebInputEvent::KeyUp && IsAltKey(event) &&
-             menu_bar_alt_pressed_) {
+  } else if (event.GetType() == blink::WebInputEvent::kKeyUp &&
+             IsAltKey(event) && menu_bar_alt_pressed_) {
     // When a single Alt is released right after a Alt is pressed:
     menu_bar_alt_pressed_ = false;
     SetMenuBarVisibility(!menu_bar_visible_);
@@ -1310,31 +1364,10 @@ void NativeWindowViews::Layout() {
     menu_bar_->SetBoundsRect(menu_bar_bounds);
   }
 
-  const auto old_web_view_size = web_view_ ? web_view_->size() : gfx::Size();
   if (web_view_) {
     web_view_->SetBoundsRect(
         gfx::Rect(0, menu_bar_bounds.height(), size.width(),
                   size.height() - menu_bar_bounds.height()));
-  }
-  const auto new_web_view_size = web_view_ ? web_view_->size() : gfx::Size();
-
-  if (browser_view_) {
-    const auto flags = static_cast<NativeBrowserViewViews*>(browser_view_)
-                           ->GetAutoResizeFlags();
-    int width_delta = 0;
-    int height_delta = 0;
-    if (flags & kAutoResizeWidth) {
-      width_delta = new_web_view_size.width() - old_web_view_size.width();
-    }
-    if (flags & kAutoResizeHeight) {
-      height_delta = new_web_view_size.height() - old_web_view_size.height();
-    }
-
-    auto* view = browser_view_->GetInspectableWebContentsView()->GetView();
-    auto new_view_size = view->size();
-    new_view_size.set_width(new_view_size.width() + width_delta);
-    new_view_size.set_height(new_view_size.height() + height_delta);
-    view->SetSize(new_view_size);
   }
 }
 

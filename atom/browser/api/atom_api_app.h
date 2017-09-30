@@ -94,6 +94,7 @@ class App : public AtomBrowserClient::Delegate,
   base::FilePath GetAppPath() const;
   void RenderProcessReady(content::RenderProcessHost* host);
   void RenderProcessDisconnected(base::ProcessId host_pid);
+  void PreMainMessageLoopRun();
 
  protected:
   explicit App(v8::Isolate* isolate);
@@ -112,12 +113,25 @@ class App : public AtomBrowserClient::Delegate,
   void OnLogin(LoginHandler* login_handler,
                const base::DictionaryValue& request_details) override;
   void OnAccessibilitySupportChanged() override;
+  void OnPreMainMessageLoopRun() override;
 #if defined(OS_MACOSX)
+  void OnWillContinueUserActivity(
+      bool* prevent_default,
+      const std::string& type) override;
+  void OnDidFailToContinueUserActivity(
+      const std::string& type,
+      const std::string& error) override;
   void OnContinueUserActivity(
       bool* prevent_default,
       const std::string& type,
       const base::DictionaryValue& user_info) override;
-
+  void OnUserActivityWasContinued(
+      const std::string& type,
+      const base::DictionaryValue& user_info) override;
+  void OnUpdateUserActivityState(
+      bool* prevent_default,
+      const std::string& type,
+      const base::DictionaryValue& user_info) override;
   void OnNewWindowForTab() override;
 #endif
 
@@ -169,7 +183,9 @@ class App : public AtomBrowserClient::Delegate,
   void ReleaseSingleInstance();
   bool Relaunch(mate::Arguments* args);
   void DisableHardwareAcceleration(mate::Arguments* args);
+  void DisableDomainBlockingFor3DAPIs(mate::Arguments* args);
   bool IsAccessibilitySupportEnabled();
+  void SetAccessibilitySupportEnabled(bool enabled);
   Browser::LoginItemSettings GetLoginItemSettings(mate::Arguments* args);
 #if defined(USE_NSS_CERTS)
   void ImportCertificate(const base::DictionaryValue& options,
@@ -181,6 +197,11 @@ class App : public AtomBrowserClient::Delegate,
   std::vector<mate::Dictionary> GetAppMetrics(v8::Isolate* isolate);
   v8::Local<v8::Value> GetGPUFeatureStatus(v8::Isolate* isolate);
   void EnableMixedSandbox(mate::Arguments* args);
+
+#if defined(OS_MACOSX)
+  bool MoveToApplicationsFolder(mate::Arguments* args);
+  bool IsInApplicationsFolder();
+#endif
 
 #if defined(OS_WIN)
   // Get the current Jump List settings.

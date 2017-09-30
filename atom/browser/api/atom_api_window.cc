@@ -10,6 +10,7 @@
 #include "atom/browser/api/atom_api_web_contents.h"
 #include "atom/browser/browser.h"
 #include "atom/browser/native_window.h"
+#include "atom/browser/web_contents_preferences.h"
 #include "atom/common/native_mate_converters/callback.h"
 #include "atom/common/native_mate_converters/file_path_converter.h"
 #include "atom/common/native_mate_converters/gfx_converter.h"
@@ -77,30 +78,43 @@ v8::Local<v8::Value> ToBuffer(v8::Isolate* isolate, void* val, int size) {
 Window::Window(v8::Isolate* isolate, v8::Local<v8::Object> wrapper,
                const mate::Dictionary& options) {
   mate::Handle<class WebContents> web_contents;
-  // If no WebContents was passed to the constructor, create it from options.
-  if (!options.Get("webContents", &web_contents)) {
-    // Use options.webPreferences to create WebContents.
-    mate::Dictionary web_preferences = mate::Dictionary::CreateEmpty(isolate);
-    options.Get(options::kWebPreferences, &web_preferences);
 
-    // Copy the backgroundColor to webContents.
-    v8::Local<v8::Value> value;
-    if (options.Get(options::kBackgroundColor, &value))
-      web_preferences.Set(options::kBackgroundColor, value);
+  // Use options.webPreferences in WebContents.
+  mate::Dictionary web_preferences = mate::Dictionary::CreateEmpty(isolate);
+  options.Get(options::kWebPreferences, &web_preferences);
 
-    v8::Local<v8::Value> transparent;
-    if (options.Get("transparent", &transparent))
-      web_preferences.Set("transparent", transparent);
+  // Copy the backgroundColor to webContents.
+  v8::Local<v8::Value> value;
+  if (options.Get(options::kBackgroundColor, &value))
+    web_preferences.Set(options::kBackgroundColor, value);
+
+  v8::Local<v8::Value> transparent;
+  if (options.Get("transparent", &transparent))
+    web_preferences.Set("transparent", transparent);
 
 #if defined(ENABLE_OSR)
-    // Offscreen windows are always created frameless.
-    bool offscreen;
-    if (web_preferences.Get("offscreen", &offscreen) && offscreen) {
-      auto window_options = const_cast<mate::Dictionary&>(options);
-      window_options.Set(options::kFrame, false);
-    }
+  // Offscreen windows are always created frameless.
+  bool offscreen;
+  if (web_preferences.Get("offscreen", &offscreen) && offscreen) {
+    auto window_options = const_cast<mate::Dictionary&>(options);
+    window_options.Set(options::kFrame, false);
+  }
 #endif
 
+  if (options.Get("webContents", &web_contents)) {
+    // Set webPreferences from options if using an existing webContents.
+    // These preferences will be used when the webContent launches new
+    // render processes.
+    auto* existing_preferences =
+        WebContentsPreferences::FromWebContents(web_contents->web_contents());
+    base::DictionaryValue web_preferences_dict;
+    if (mate::ConvertFromV8(isolate, web_preferences.GetHandle(),
+                        &web_preferences_dict)) {
+      existing_preferences->web_preferences()->Clear();
+      existing_preferences->Merge(web_preferences_dict);
+    }
+
+  } else {
     // Creates the WebContents used by BrowserWindow.
     web_contents = WebContents::Create(isolate, web_preferences);
   }
@@ -589,6 +603,14 @@ void Window::SetSkipTaskbar(bool skip) {
   window_->SetSkipTaskbar(skip);
 }
 
+void Window::SetSimpleFullScreen(bool simple_fullscreen) {
+  window_->SetSimpleFullScreen(simple_fullscreen);
+}
+
+bool Window::IsSimpleFullScreen() {
+  return window_->IsSimpleFullScreen();
+}
+
 void Window::SetKiosk(bool kiosk) {
   window_->SetKiosk(kiosk);
 }
@@ -637,8 +659,11 @@ bool Window::IsDocumentEdited() {
   return window_->IsDocumentEdited();
 }
 
-void Window::SetIgnoreMouseEvents(bool ignore) {
-  return window_->SetIgnoreMouseEvents(ignore);
+void Window::SetIgnoreMouseEvents(bool ignore, mate::Arguments* args) {
+  mate::Dictionary options;
+  bool forward = false;
+  args->GetNext(&options) && options.Get("forward", &forward);
+  return window_->SetIgnoreMouseEvents(ignore, forward);
 }
 
 void Window::SetContentProtection(bool enable) {
@@ -893,6 +918,26 @@ void Window::SetAutoHideCursor(bool auto_hide) {
   window_->SetAutoHideCursor(auto_hide);
 }
 
+void Window::SelectPreviousTab() {
+  window_->SelectPreviousTab();
+}
+
+void Window::SelectNextTab() {
+  window_->SelectNextTab();
+}
+
+void Window::MergeAllWindows() {
+  window_->MergeAllWindows();
+}
+
+void Window::MoveTabToNewWindow() {
+  window_->MoveTabToNewWindow();
+}
+
+void Window::ToggleTabBar() {
+  window_->ToggleTabBar();
+}
+
 void Window::SetVibrancy(mate::Arguments* args) {
   std::string type;
 
@@ -1004,6 +1049,8 @@ void Window::BuildPrototype(v8::Isolate* isolate,
       .SetMethod("getTitle", &Window::GetTitle)
       .SetMethod("flashFrame", &Window::FlashFrame)
       .SetMethod("setSkipTaskbar", &Window::SetSkipTaskbar)
+      .SetMethod("setSimpleFullScreen", &Window::SetSimpleFullScreen)
+      .SetMethod("isSimpleFullScreen", &Window::IsSimpleFullScreen)
       .SetMethod("setKiosk", &Window::SetKiosk)
       .SetMethod("isKiosk", &Window::IsKiosk)
       .SetMethod("setBackgroundColor", &Window::SetBackgroundColor)
@@ -1033,6 +1080,11 @@ void Window::BuildPrototype(v8::Isolate* isolate,
                  &Window::IsVisibleOnAllWorkspaces)
 #if defined(OS_MACOSX)
       .SetMethod("setAutoHideCursor", &Window::SetAutoHideCursor)
+      .SetMethod("mergeAllWindows", &Window::MergeAllWindows)
+      .SetMethod("selectPreviousTab", &Window::SelectPreviousTab)
+      .SetMethod("selectNextTab", &Window::SelectNextTab)
+      .SetMethod("moveTabToNewWindow", &Window::MoveTabToNewWindow)
+      .SetMethod("toggleTabBar", &Window::ToggleTabBar)
 #endif
       .SetMethod("setVibrancy", &Window::SetVibrancy)
       .SetMethod("_setTouchBarItems", &Window::SetTouchBar)

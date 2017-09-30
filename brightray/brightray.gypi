@@ -92,10 +92,10 @@
       'Common_Base': {
         'abstract': 1,
         'defines': [
-          # We are using Release version libchromiumcontent:
-          'NDEBUG',
           # Needed by gin:
           'V8_USE_EXTERNAL_STARTUP_DATA',
+          # Special configuration for node:
+          'V8_PROMISE_INTERNAL_FIELD_COUNT=1',
           # From skia_for_chromium_defines.gypi:
           'SK_SUPPORT_LEGACY_GETTOPDEVICE',
           'SK_SUPPORT_LEGACY_BITMAP_CONFIG',
@@ -189,6 +189,7 @@
           # Use this instead of "NDEBUG" to determine whether we are in
           # Debug build, because "NDEBUG" is already used by Chromium.
           'DEBUG',
+          '_DEBUG',
           # Require when using libchromiumcontent.
           'COMPONENT_BUILD',
           'GURL_DLL',
@@ -198,15 +199,32 @@
         ],
         'msvs_settings': {
           'VCCLCompilerTool': {
-            'RuntimeLibrary': '2',  # /MD (nondebug DLL)
+            'RuntimeLibrary': '3',  # /MDd (debug DLL)
             'Optimization': '0',  # 0 = /Od
             # See http://msdn.microsoft.com/en-us/library/8wtf2dfz(VS.71).aspx
             'BasicRuntimeChecks': '3',  # 3 = all checks enabled, 0 = off
           },
+          'VCLinkerTool': {
+            'OptimizeReferences': 2, # /OPT:REF
+            'EnableCOMDATFolding': 2, # /OPT:ICF
+          },
         },
+        'conditions': [
+          ['OS=="linux" and target_arch=="x64"', {
+            'defines': [
+              '_GLIBCXX_DEBUG',
+            ],
+            'cflags': [
+              '-g',
+            ],
+          }],  # OS=="linux"
+        ],
       },  # Debug_Base
       'Release_Base': {
         'abstract': 1,
+        'defines': [
+          'NDEBUG',
+        ],
         'msvs_settings': {
           'VCCLCompilerTool': {
             'RuntimeLibrary': '2',  # /MD (nondebug DLL)
@@ -314,7 +332,7 @@
         ],
       }],
     ],  # target_conditions
-    # Ignored compiler warnings of Chromium.
+    # Ignored compiler warnings of Chromium/Node.js
     'conditions': [
       ['OS=="mac"', {
         'xcode_settings': {
@@ -339,6 +357,7 @@
       ['OS=="win"', {
         'msvs_disabled_warnings': [
           4100, # unreferenced formal parameter
+          4102, # unreferencd label
           4121, # alignment of a member was sensitive to packing
           4127, # conditional expression is constant
           4189, # local variable is initialized but not referenced
@@ -353,6 +372,7 @@
           4512, # assignment operator could not be generated
           4610, # user defined constructor required
           4702, # unreachable code
+          4715, # not all control paths return a value
           4819, # The file contains a character that cannot be represented in the current code page
         ],
       }],

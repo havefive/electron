@@ -35,6 +35,7 @@
 #include "chrome/browser/icon_manager.h"
 #include "chrome/common/chrome_paths.h"
 #include "content/browser/gpu/compositor_util.h"
+#include "content/browser/gpu/gpu_data_manager_impl.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
@@ -51,6 +52,10 @@
 #if defined(OS_WIN)
 #include "atom/browser/ui/win/jump_list.h"
 #include "base/strings/utf_string_conversions.h"
+#endif
+
+#if defined(OS_MACOSX)
+#include "atom/browser/ui/cocoa/atom_bundle_mover.h"
 #endif
 
 using atom::Browser;
@@ -370,6 +375,8 @@ int GetPathConstant(const std::string& name) {
     return brightray::DIR_CACHE;
   else if (name == "userCache")
     return brightray::DIR_USER_CACHE;
+  else if (name == "logs")
+    return brightray::DIR_APP_LOGS;
   else if (name == "home")
     return base::DIR_HOME;
   else if (name == "temp")
@@ -574,11 +581,29 @@ void App::OnFinishLaunching(const base::DictionaryValue& launch_info) {
   Emit("ready", launch_info);
 }
 
+void App::OnPreMainMessageLoopRun() {
+  if (process_singleton_) {
+    process_singleton_->OnBrowserReady();
+  }
+}
+
 void App::OnAccessibilitySupportChanged() {
   Emit("accessibility-support-changed", IsAccessibilitySupportEnabled());
 }
 
 #if defined(OS_MACOSX)
+void App::OnWillContinueUserActivity(
+    bool* prevent_default,
+    const std::string& type) {
+  *prevent_default = Emit("will-continue-activity", type);
+}
+
+void App::OnDidFailToContinueUserActivity(
+    const std::string& type,
+    const std::string& error) {
+  Emit("continue-activity-error", type, error);
+}
+
 void App::OnContinueUserActivity(
     bool* prevent_default,
     const std::string& type,
@@ -586,10 +611,22 @@ void App::OnContinueUserActivity(
   *prevent_default = Emit("continue-activity", type, user_info);
 }
 
+void App::OnUserActivityWasContinued(
+    const std::string& type,
+    const base::DictionaryValue& user_info) {
+  Emit("activity-was-continued", type, user_info);
+}
+
+void App::OnUpdateUserActivityState(
+    bool* prevent_default,
+    const std::string& type,
+    const base::DictionaryValue& user_info) {
+  *prevent_default = Emit("update-activity-state", type, user_info);
+}
+
 void App::OnNewWindowForTab() {
   Emit("new-window-for-tab");
 }
-
 #endif
 
 void App::OnLogin(LoginHandler* login_handler,
@@ -852,9 +889,30 @@ void App::DisableHardwareAcceleration(mate::Arguments* args) {
   content::GpuDataManager::GetInstance()->DisableHardwareAcceleration();
 }
 
+void App::DisableDomainBlockingFor3DAPIs(mate::Arguments* args) {
+  if (Browser::Get()->is_ready()) {
+    args->ThrowError(
+        "app.disableDomainBlockingFor3DAPIs() can only be called "
+        "before app is ready");
+    return;
+  }
+  content::GpuDataManagerImpl::GetInstance()
+      ->DisableDomainBlockingFor3DAPIsForTesting();
+}
+
 bool App::IsAccessibilitySupportEnabled() {
   auto ax_state = content::BrowserAccessibilityState::GetInstance();
   return ax_state->IsAccessibleBrowser();
+}
+
+void App::SetAccessibilitySupportEnabled(bool enabled) {
+  auto ax_state = content::BrowserAccessibilityState::GetInstance();
+  if (enabled) {
+    ax_state->OnScreenReaderDetected();
+  } else {
+    ax_state->DisableAccessibility();
+  }
+  Browser::Get()->OnAccessibilitySupportChanged();
 }
 
 Browser::LoginItemSettings App::GetLoginItemSettings(mate::Arguments* args) {
@@ -1060,6 +1118,16 @@ void App::EnableMixedSandbox(mate::Arguments* args) {
   command_line->AppendSwitch(switches::kEnableMixedSandbox);
 }
 
+#if defined(OS_MACOSX)
+bool App::MoveToApplicationsFolder(mate::Arguments* args) {
+  return ui::cocoa::AtomBundleMover::Move(args);
+}
+
+bool App::IsInApplicationsFolder() {
+  return ui::cocoa::AtomBundleMover::IsCurrentAppInApplicationsFolder();
+}
+#endif
+
 // static
 mate::Handle<App> App::Create(v8::Isolate* isolate) {
   return mate::CreateHandle(isolate, new App(isolate));
@@ -1103,6 +1171,10 @@ void App::BuildPrototype(
                  base::Bind(&Browser::SetUserActivity, browser))
       .SetMethod("getCurrentActivityType",
                  base::Bind(&Browser::GetCurrentActivityType, browser))
+      .SetMethod("invalidateCurrentActivity",
+                 base::Bind(&Browser::InvalidateCurrentActivity, browser))
+      .SetMethod("updateCurrentActivity",
+                 base::Bind(&Browser::UpdateCurrentActivity, browser))
       .SetMethod("setAboutPanelOptions",
                  base::Bind(&Browser::SetAboutPanelOptions, browser))
 #endif
@@ -1129,13 +1201,21 @@ void App::BuildPrototype(
       .SetMethod("relaunch", &App::Relaunch)
       .SetMethod("isAccessibilitySupportEnabled",
                  &App::IsAccessibilitySupportEnabled)
+      .SetMethod("setAccessibilitySupportEnabled",
+                 &App::SetAccessibilitySupportEnabled)
       .SetMethod("disableHardwareAcceleration",
                  &App::DisableHardwareAcceleration)
+      .SetMethod("disableDomainBlockingFor3DAPIs",
+                 &App::DisableDomainBlockingFor3DAPIs)
       .SetMethod("getFileIcon", &App::GetFileIcon)
       .SetMethod("getAppMetrics", &App::GetAppMetrics)
       .SetMethod("getGPUFeatureStatus", &App::GetGPUFeatureStatus)
       .SetMethod("enableMixedSandbox", &App::EnableMixedSandbox)
       // TODO(juturu): Remove in 2.0, deprecate before then with warnings
+      #if defined(OS_MACOSX)
+      .SetMethod("moveToApplicationsFolder", &App::MoveToApplicationsFolder)
+      .SetMethod("isInApplicationsFolder", &App::IsInApplicationsFolder)
+      #endif
       .SetMethod("getAppMemoryInfo", &App::GetAppMetrics);
 }
 

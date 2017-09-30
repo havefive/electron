@@ -7,6 +7,7 @@
 
 #include "atom/browser/native_window.h"
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -96,12 +97,14 @@ class NativeWindowViews : public NativeWindow,
   std::string GetTitle() override;
   void FlashFrame(bool flash) override;
   void SetSkipTaskbar(bool skip) override;
+  void SetSimpleFullScreen(bool simple_fullscreen) override;
+  bool IsSimpleFullScreen() override;
   void SetKiosk(bool kiosk) override;
   bool IsKiosk() override;
   void SetBackgroundColor(const std::string& color_name) override;
   void SetHasShadow(bool has_shadow) override;
   bool HasShadow() override;
-  void SetIgnoreMouseEvents(bool ignore) override;
+  void SetIgnoreMouseEvents(bool ignore, bool forward) override;
   void SetContentProtection(bool enable) override;
   void SetFocusable(bool focusable) override;
   void SetMenu(AtomMenuModel* menu_model) override;
@@ -169,6 +172,12 @@ class NativeWindowViews : public NativeWindow,
   bool PreHandleMSG(
       UINT message, WPARAM w_param, LPARAM l_param, LRESULT* result) override;
   void HandleSizeEvent(WPARAM w_param, LPARAM l_param);
+  void SetForwardMouseMessages(bool forward);
+  static LRESULT CALLBACK SubclassProc(
+      HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param, UINT_PTR subclass_id,
+      DWORD_PTR ref_data);
+  static LRESULT CALLBACK MouseHookProc(
+      int n_code, WPARAM w_param, LPARAM l_param);
 #endif
 
   // NativeWindow:
@@ -259,6 +268,12 @@ class NativeWindowViews : public NativeWindow,
   // The icons of window and taskbar.
   base::win::ScopedHICON window_icon_;
   base::win::ScopedHICON app_icon_;
+
+  // The set of windows currently forwarding mouse messages.
+  static std::set<NativeWindowViews*> forwarding_windows_;
+  static HHOOK mouse_hook_;
+  bool forwarding_mouse_messages_ = false;
+  HWND legacy_window_ = NULL;
 #endif
 
   // Handles unhandled keyboard messages coming back from the renderer process.

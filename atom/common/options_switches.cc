@@ -36,6 +36,8 @@ const char kSkipTaskbar[] = "skipTaskbar";
 // http://www.opera.com/support/mastering/kiosk/
 const char kKiosk[] = "kiosk";
 
+const char kSimpleFullScreen[] = "simpleFullscreen";
+
 // Make windows stays on the top of all other windows.
 const char kAlwaysOnTop[] = "alwaysOnTop";
 
@@ -47,6 +49,9 @@ const char kUseContentSize[] = "useContentSize";
 
 // Whether window zoom should be to page width.
 const char kZoomToPageWidth[] = "zoomToPageWidth";
+
+// Whether always show title text in full screen is enabled.
+const char kFullscreenWindowTitle[] = "fullscreenWindowTitle";
 
 // The requested title bar style for the window
 const char kTitleBarStyle[] = "titleBarStyle";

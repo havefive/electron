@@ -172,6 +172,8 @@ bool ScopedDisableResize::disable_resize_ = false;
  @private
   atom::NativeWindowMac* shell_;
   bool is_zooming_;
+  int level_;
+  bool is_resizable_;
 }
 - (id)initWithShell:(atom::NativeWindowMac*)shell;
 @end
@@ -182,6 +184,7 @@ bool ScopedDisableResize::disable_resize_ = false;
   if ((self = [super init])) {
     shell_ = shell;
     is_zooming_ = false;
+    level_ = [shell_->GetNativeWindow() level];
   }
   return self;
 }
@@ -301,11 +304,19 @@ bool ScopedDisableResize::disable_resize_ = false;
   shell_->NotifyWindowMoved();
 }
 
+- (void)windowWillMiniaturize:(NSNotification*)notification {
+  NSWindow* window = shell_->GetNativeWindow();
+  // store the current status window level to be restored in windowDidDeminiaturize
+  level_ = [window level];
+  [window setLevel:NSNormalWindowLevel];
+}
+
 - (void)windowDidMiniaturize:(NSNotification*)notification {
   shell_->NotifyWindowMinimize();
 }
 
 - (void)windowDidDeminiaturize:(NSNotification*)notification {
+  [shell_->GetNativeWindow() setLevel:level_];
   shell_->NotifyWindowRestore();
 }
 
@@ -325,6 +336,9 @@ bool ScopedDisableResize::disable_resize_ = false;
 }
 
 - (void)windowWillEnterFullScreen:(NSNotification*)notification {
+  // Setting resizable to true before entering fullscreen 
+  is_resizable_ = shell_->IsResizable();
+  shell_->SetResizable(true);
   // Hide the native toolbar before entering fullscreen, so there is no visual
   // artifacts.
   if (base::mac::IsAtLeastOS10_10() &&
@@ -345,7 +359,9 @@ bool ScopedDisableResize::disable_resize_ = false;
       base::mac::IsAtLeastOS10_10() &&
       // FIXME(zcbenz): Showing titlebar for hiddenInset window is weird under
       // fullscreen mode.
-      shell_->title_bar_style() != atom::NativeWindowMac::HIDDEN_INSET) {
+      // Show title if fullscreen_window_title flag is set
+      (shell_->title_bar_style() != atom::NativeWindowMac::HIDDEN_INSET ||
+       shell_->fullscreen_window_title())) {
     [window setTitleVisibility:NSWindowTitleVisible];
   }
 
@@ -369,7 +385,8 @@ bool ScopedDisableResize::disable_resize_ = false;
   NSWindow* window = shell_->GetNativeWindow();
   if ((shell_->transparent() || !shell_->has_frame()) &&
       base::mac::IsAtLeastOS10_10() &&
-      shell_->title_bar_style() != atom::NativeWindowMac::HIDDEN_INSET) {
+      (shell_->title_bar_style() != atom::NativeWindowMac::HIDDEN_INSET ||
+       shell_->fullscreen_window_title())) {
     [window setTitleVisibility:NSWindowTitleHidden];
   }
 
@@ -381,6 +398,7 @@ bool ScopedDisableResize::disable_resize_ = false;
 }
 
 - (void)windowDidExitFullScreen:(NSNotification*)notification {
+  shell_->SetResizable(is_resizable_);
   shell_->NotifyWindowLeaveFullScreen();
 }
 
@@ -456,6 +474,11 @@ enum {
 @interface NSWindow (SierraSDK)
 - (void)setTabbingMode:(NSInteger)mode;
 - (void)setTabbingIdentifier:(NSString*)identifier;
+- (IBAction)selectPreviousTab:(id)sender;
+- (IBAction)selectNextTab:(id)sender;
+- (IBAction)mergeAllWindows:(id)sender;
+- (IBAction)moveTabToNewWindow:(id)sender;
+- (IBAction)toggleTabBar:(id)sender;
 @end
 
 #endif  // MAC_OS_X_VERSION_10_12
@@ -707,6 +730,13 @@ enum {
     [super performClose:sender];
 }
 
+- (void)toggleFullScreen:(id)sender {
+  if (shell_->simple_fullscreen())
+    shell_->SetSimpleFullScreen(!shell_->IsSimpleFullScreen());
+  else
+   [super toggleFullScreen:sender];
+}
+
 - (void)performMiniaturize:(id)sender {
   if (shell_->title_bar_style() == atom::NativeWindowMac::CUSTOM_BUTTONS_ON_HOVER)
     [self miniaturize:self];
@@ -804,8 +834,11 @@ NativeWindowMac::NativeWindowMac(
       is_kiosk_(false),
       was_fullscreen_(false),
       zoom_to_page_width_(false),
+      fullscreen_window_title_(false),
       attention_request_id_(0),
-      title_bar_style_(NORMAL) {
+      title_bar_style_(NORMAL),
+      always_simple_fullscreen_(false),
+      is_simple_fullscreen_(false) {
   int width = 800, height = 600;
   options.Get(options::kWidth, &width);
   options.Get(options::kHeight, &height);
@@ -949,6 +982,10 @@ NativeWindowMac::NativeWindowMac(
 
   options.Get(options::kZoomToPageWidth, &zoom_to_page_width_);
 
+  options.Get(options::kFullscreenWindowTitle, &fullscreen_window_title_);
+
+  options.Get(options::kSimpleFullScreen, &always_simple_fullscreen_);
+
   // Enable the NSView to accept first mouse event.
   bool acceptsFirstMouse = false;
   options.Get(options::kAcceptFirstMouse, &acceptsFirstMouse);
@@ -1049,6 +1086,10 @@ void NativeWindowMac::Show() {
     return;
   }
 
+  // Reattach the window to the parent to actually show it.
+  if (parent())
+    InternalSetParentWindow(parent(), true);
+
   // This method is supposed to put focus on window, however if the app does not
   // have focus then "makeKeyAndOrderFront" will only show the window.
   [NSApp activateIgnoringOtherApps:YES];
@@ -1057,6 +1098,10 @@ void NativeWindowMac::Show() {
 }
 
 void NativeWindowMac::ShowInactive() {
+  // Reattach the window to the parent to actually show it.
+  if (parent())
+    InternalSetParentWindow(parent(), true);
+
   [window_ orderFrontRegardless];
 }
 
@@ -1066,6 +1111,10 @@ void NativeWindowMac::Hide() {
     [parent()->GetNativeWindow() endSheet:window_];
     return;
   }
+
+  // Deattach the window from the parent before.
+  if (parent())
+    InternalSetParentWindow(parent(), false);
 
   [window_ orderOut:nil];
 }
@@ -1335,6 +1384,80 @@ void NativeWindowMac::FlashFrame(bool flash) {
 void NativeWindowMac::SetSkipTaskbar(bool skip) {
 }
 
+void NativeWindowMac::SetSimpleFullScreen(bool simple_fullscreen) {
+  NSWindow* window = GetNativeWindow();
+
+  if (simple_fullscreen && !is_simple_fullscreen_) {
+    is_simple_fullscreen_ = true;
+
+    // Take note of the current window size
+    original_frame_ = [window frame];
+
+    simple_fullscreen_options_ = [NSApp currentSystemPresentationOptions];
+    simple_fullscreen_mask_ = [window styleMask];
+
+    // We can simulate the pre-Lion fullscreen by auto-hiding the dock and menu bar
+    NSApplicationPresentationOptions options =
+        NSApplicationPresentationAutoHideDock +
+        NSApplicationPresentationAutoHideMenuBar;
+    [NSApp setPresentationOptions:options];
+
+    was_maximizable_ = IsMaximizable();
+    was_movable_ = IsMovable();
+
+    NSRect fullscreenFrame = [window.screen frame];
+
+    if ( !fullscreen_window_title() ) {
+      // Hide the titlebar
+      SetStyleMask(false, NSTitledWindowMask);
+
+      // Resize the window to accomodate the _entire_ screen size
+      fullscreenFrame.size.height -= [[[NSApplication sharedApplication] mainMenu] menuBarHeight];
+    } else {
+      // No need to hide the title, but we should still hide the window buttons
+      [[window standardWindowButton:NSWindowZoomButton] setHidden:YES];
+      [[window standardWindowButton:NSWindowMiniaturizeButton] setHidden:YES];
+      [[window standardWindowButton:NSWindowCloseButton] setHidden:YES];
+    }
+
+    [window setFrame:fullscreenFrame display: YES animate: YES];
+
+    // Fullscreen windows can't be resized, minimized, maximized, or moved
+    SetMinimizable(false);
+    SetResizable(false);
+    SetMaximizable(false);
+    SetMovable(false);
+  } else if (!simple_fullscreen && is_simple_fullscreen_) {
+    is_simple_fullscreen_ = false;
+
+    if ( !fullscreen_window_title() ) {
+      // Restore the titlebar
+      SetStyleMask(true, NSTitledWindowMask);
+    } else {
+      // Show the window buttons
+      [[window standardWindowButton:NSWindowZoomButton] setHidden:NO];
+      [[window standardWindowButton:NSWindowMiniaturizeButton] setHidden:NO];
+      [[window standardWindowButton:NSWindowCloseButton] setHidden:NO];
+    }
+
+    [window setFrame:original_frame_ display: YES animate: YES];
+
+    [NSApp setPresentationOptions:simple_fullscreen_options_];
+
+    // Restore original style mask
+    ScopedDisableResize disable_resize;
+    [window_ setStyleMask:simple_fullscreen_mask_];
+
+    // Restore window manipulation abilities
+    SetMaximizable(was_maximizable_);
+    SetMovable(was_movable_);
+  }
+}
+
+bool NativeWindowMac::IsSimpleFullScreen() {
+  return is_simple_fullscreen_;
+}
+
 void NativeWindowMac::SetKiosk(bool kiosk) {
   if (kiosk && !is_kiosk_) {
     kiosk_options_ = [NSApp currentSystemPresentationOptions];
@@ -1396,7 +1519,7 @@ bool NativeWindowMac::IsDocumentEdited() {
   return [window_ isDocumentEdited];
 }
 
-void NativeWindowMac::SetIgnoreMouseEvents(bool ignore) {
+void NativeWindowMac::SetIgnoreMouseEvents(bool ignore, bool) {
   [window_ setIgnoresMouseEvents:ignore];
 }
 
@@ -1426,18 +1549,7 @@ void NativeWindowMac::SetBrowserView(NativeBrowserView* browser_view) {
 }
 
 void NativeWindowMac::SetParentWindow(NativeWindow* parent) {
-  if (is_modal())
-    return;
-
-  NativeWindow::SetParentWindow(parent);
-
-  // Remove current parent window.
-  if ([window_ parentWindow])
-    [[window_ parentWindow] removeChildWindow:window_];
-
-  // Set new current window.
-  if (parent)
-    [parent->GetNativeWindow() addChildWindow:window_ ordered:NSWindowAbove];
+  InternalSetParentWindow(parent, IsVisible());
 }
 
 gfx::NativeView NativeWindowMac::GetNativeView() const {
@@ -1505,6 +1617,36 @@ bool NativeWindowMac::IsVisibleOnAllWorkspaces() {
 
 void NativeWindowMac::SetAutoHideCursor(bool auto_hide) {
   [window_ setDisableAutoHideCursor:!auto_hide];
+}
+
+void NativeWindowMac::SelectPreviousTab() {
+  if ([window_ respondsToSelector:@selector(selectPreviousTab:)]) {
+    [window_ selectPreviousTab:nil];
+  }
+}
+
+void NativeWindowMac::SelectNextTab() {
+  if ([window_ respondsToSelector:@selector(selectNextTab:)]) {
+    [window_ selectNextTab:nil];
+  }
+}
+
+void NativeWindowMac::MergeAllWindows() {
+  if ([window_ respondsToSelector:@selector(mergeAllWindows:)]) {
+    [window_ mergeAllWindows:nil];
+  }
+}
+
+void NativeWindowMac::MoveTabToNewWindow() {
+  if ([window_ respondsToSelector:@selector(moveTabToNewWindow:)]) {
+    [window_ moveTabToNewWindow:nil];
+  }
+}
+
+void NativeWindowMac::ToggleTabBar() {
+  if ([window_ respondsToSelector:@selector(toggleTabBar:)]) {
+    [window_ toggleTabBar:nil];
+  }
 }
 
 void NativeWindowMac::SetVibrancy(const std::string& type) {
@@ -1588,10 +1730,10 @@ void NativeWindowMac::SetEscapeTouchBarItem(const mate::PersistentDictionary& it
 }
 
 void NativeWindowMac::OnInputEvent(const blink::WebInputEvent& event) {
-  switch (event.type()) {
-    case blink::WebInputEvent::GestureScrollBegin:
-    case blink::WebInputEvent::GestureScrollUpdate:
-    case blink::WebInputEvent::GestureScrollEnd:
+  switch (event.GetType()) {
+    case blink::WebInputEvent::kGestureScrollBegin:
+    case blink::WebInputEvent::kGestureScrollUpdate:
+    case blink::WebInputEvent::kGestureScrollEnd:
         this->NotifyWindowScrollTouchEdge();
       break;
     default:
@@ -1654,6 +1796,26 @@ void NativeWindowMac::UpdateDraggableRegions(
   NativeWindow::UpdateDraggableRegions(regions);
   draggable_regions_ = regions;
   UpdateDraggableRegionViews(regions);
+}
+
+void NativeWindowMac::InternalSetParentWindow(NativeWindow* parent, bool attach) {
+  if (is_modal())
+    return;
+
+  NativeWindow::SetParentWindow(parent);
+
+  // Do not remove/add if we are already properly attached.
+  if (attach && parent && [window_ parentWindow] == parent->GetNativeWindow())
+    return;
+
+  // Remove current parent window.
+  if ([window_ parentWindow])
+    [[window_ parentWindow] removeChildWindow:window_];
+
+  // Set new parent window.
+  // Note that this method will force the window to become visible.
+  if (parent && attach)
+    [parent->GetNativeWindow() addChildWindow:window_ ordered:NSWindowAbove];
 }
 
 void NativeWindowMac::ShowWindowButton(NSWindowButton button) {
@@ -1750,6 +1912,10 @@ void NativeWindowMac::UpdateDraggableRegionViews(
   // (mouseDownCanMoveWindow) and overlaying regions that are not draggable.
   std::vector<gfx::Rect> system_drag_exclude_areas =
       CalculateNonDraggableRegions(regions, webViewWidth, webViewHeight);
+
+  if (browser_view_) {
+    browser_view_->UpdateDraggableRegions(system_drag_exclude_areas);
+  }
 
   // Create and add a ControlRegionView for each region that needs to be
   // excluded from the dragging.
