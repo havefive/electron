@@ -9,11 +9,8 @@
 
 #include "atom/common/draggable_region.h"
 #include "base/macros.h"
+#include "content/public/browser/web_contents.h"
 #include "third_party/skia/include/core/SkColor.h"
-
-namespace brightray {
-class InspectableWebContentsView;
-}
 
 namespace gfx {
 class Rect;
@@ -24,18 +21,26 @@ namespace atom {
 enum AutoResizeFlags {
   kAutoResizeWidth = 0x1,
   kAutoResizeHeight = 0x2,
+  kAutoResizeHorizontal = 0x4,
+  kAutoResizeVertical = 0x8,
 };
+
+class InspectableWebContents;
+class InspectableWebContentsView;
 
 class NativeBrowserView {
  public:
   virtual ~NativeBrowserView();
 
   static NativeBrowserView* Create(
-      brightray::InspectableWebContentsView* web_contents_view);
+      InspectableWebContents* inspectable_web_contents);
 
-  brightray::InspectableWebContentsView* GetInspectableWebContentsView() {
-    return web_contents_view_;
+  InspectableWebContents* GetInspectableWebContents() {
+    return inspectable_web_contents_;
   }
+
+  InspectableWebContentsView* GetInspectableWebContentsView();
+  content::WebContents* GetWebContents();
 
   virtual void SetAutoResizeFlags(uint8_t flags) = 0;
   virtual void SetBounds(const gfx::Rect& bounds) = 0;
@@ -43,13 +48,12 @@ class NativeBrowserView {
 
   // Called when the window needs to update its draggable region.
   virtual void UpdateDraggableRegions(
-    const std::vector<gfx::Rect>& system_drag_exclude_areas) {}
+      const std::vector<gfx::Rect>& system_drag_exclude_areas) {}
 
  protected:
-  explicit NativeBrowserView(
-      brightray::InspectableWebContentsView* web_contents_view);
+  explicit NativeBrowserView(InspectableWebContents* inspectable_web_contents);
 
-  brightray::InspectableWebContentsView* web_contents_view_;
+  InspectableWebContents* inspectable_web_contents_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NativeBrowserView);

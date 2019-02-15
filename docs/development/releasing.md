@@ -2,63 +2,104 @@
 
 This document describes the process for releasing a new version of Electron.
 
-## Create a backport branch
+## Set your tokens and environment variables
+You'll need Electron S3 credentials in order to create and
+upload an Electron release. Contact a team member for more
+information.
 
-If you're about release a new major or minor version of Electron like `1.8.0`,
-`1.9.0`, or `2.0.0`, first create a branch from the most recent minor release
-for later backports:
+There are a handful of `*_TOKEN` environment variables needed by the release
+scripts:
 
-Assuming you're about to publish `1.8.0`, and the highest `1.7` release was
-`1.7.6`:
+* `ELECTRON_GITHUB_TOKEN`:
+Create this by visiting https://github.com/settings/tokens/new?scopes=repo
+* `APPVEYOR_TOKEN`:
+Create a token from https://windows-ci.electronjs.org/api-token
+If you don't have an account, ask a team member to add you.
+* `CIRCLE_TOKEN`:
+Create a token from "Personal API Tokens" at https://circleci.com/account/api
+* `VSTS_TOKEN`:
+Create a Personal Access Token at https://github.visualstudio.com/_usersSettings/tokens or https://github.visualstudio.com/_details/security/tokens
+with the scope of `Build (read and execute)`.
+* `ELECTRON_S3_BUCKET`:
+* `ELECTRON_S3_ACCESS_KEY`:
+* `ELECTRON_S3_SECRET_KEY`:
+If you don't have these, ask a team member to help you.
 
+Once you've generated these tokens, put them in a `.env` file in the root directory
+of the project. This file is gitignored, and will be loaded into the 
+environment by the release scripts.
+
+
+## Determine which branch to release from
+
+- **If releasing beta,** run the scripts below from `master`.
+- **If releasing a stable version,** run the scripts below from the branch
+  you're stabilizing.
+
+## Find out what version change is needed
+Run `npm run prepare-release -- --notesOnly` to view auto generated release
+notes. The notes generated should help you determine if this is a major, minor,
+patch, or beta version change. Read the
+[Version Change Rules](../tutorial/electron-versioning.md#semver) for more information.
+
+**NB:** If releasing from a branch, e.g. 1-8-x, check out the branch with
+`git checkout 1-8-x` rather than `git checkout -b remotes/origin/1-8-x`.
+The scripts need `git rev-parse --abbrev-ref HEAD` to return a short name,
+e.g. no `remotes/origin/`
+
+## Run the prepare-release script
+The prepare release script will do the following:
+1. Check if a release is already in process and if so it will halt.
+2. Create a release branch.
+3. Bump the version number in several files. See [this bump commit] for an example.
+4. Create a draft release on GitHub with auto-generated release notes.
+5. Push the release branch.
+6. Call the APIs to run the release builds.
+
+Once you have determined which type of version change is needed, run the
+`prepare-release` script with arguments according to your need:
+- `[major|minor|patch|beta]` to increment one of the version numbers, or
+- `--stable` to indicate this is a stable version
+
+For example:
+
+### Major version change
 ```sh
-git checkout -b 1-7-x v1.7.6
-git push origin HEAD
+npm run prepare-release -- major
+```
+### Minor version change
+```sh
+npm run prepare-release -- minor
+```
+### Patch version change
+```sh
+npm run prepare-release -- patch --stable
+```
+### Beta version change
+```sh
+npm run prepare-release -- beta
+```
+### Promote beta to stable
+```sh
+npm run prepare-release -- --stable
 ```
 
-## Create a temporary branch
-
-Create a new branch from `master`. Name it `release` or anything you like.
-
-Note: If you are creating a backport release, you'll check out `1-6-x`, `1-7-x`, etc instead of `master`.
-
+Tip: You can test the new version number before running `prepare-release` with
+a dry run of the `bump-version` script with the same major/minor/patch/beta
+arguments, e.g.:
 ```sh
-git checkout master
-git pull
-git checkout -b release
+$ ./script/bump-version.py --bump minor --dry-run
 ```
-
-This branch is created as a precaution to prevent any merged PRs from sneaking into a release between the time the temporary release branch is created and the CI builds are complete.
-
-## Check for extant drafts
-
-The upload script [looks for an existing draft release](https://github.com/electron/electron/blob/7961a97d7ddbed657c6c867cc8426e02c236c077/script/upload.py#L173-L181). To prevent your new release
-from clobbering an existing draft, check [the releases page] and
-make sure there are no drafts.
-
-## Bump the version
-
-Run the `bump-version` script, passing `major`, `minor`, or `patch` as an argument:
-
-```sh
-npm run bump-version -- patch
-git push origin HEAD
-```
-
-This will bump the version number in several files. See [this bump commit] for an example.
-
-Most releases will be `patch` level. Upgrades to Chrome or other major changes should use `minor`. For more info, see [electron-versioning].
 
 ## Wait for builds :hourglass_flowing_sand:
-
-The presence of the word [`Bump`](https://github.com/electron/electron/blob/7961a97d7ddbed657c6c867cc8426e02c236c077/script/cibuild-linux#L3-L6) in the commit message created by the `bump-version` script
-will [trigger the release process](https://github.com/electron/electron/blob/7961a97d7ddbed657c6c867cc8426e02c236c077/script/cibuild#L82-L96).
-
+The `prepare-release` script will trigger the builds via API calls.
 To monitor the build progress, see the following pages:
 
-- [208.52.191.140:8080/view/All/builds](http://208.52.191.140:8080/view/All/builds) for Mac
-- [circleci.com/gh/electron](https://circleci.com/gh/electron) for Linux
-- [windows-ci.electronjs.org/project/AppVeyor/electron](https://windows-ci.electronjs.org/project/AppVeyor/electron) for Windows
+- [electron-release-mas-x64](https://github.visualstudio.com/electron/_build/index?context=allDefinitions&path=%5C&definitionId=19&_a=completed) for MAS builds.
+- [electron-release-osx-x64](https://github.visualstudio.com/electron/_build/index?context=allDefinitions&path=%5C&definitionId=18&_a=completed) for OSX builds.
+- [circleci.com/gh/electron/electron](https://circleci.com/gh/electron) for Linux builds.
+- [windows-ci.electronjs.org/project/AppVeyor/electron-39ng6](https://windows-ci.electronjs.org/project/AppVeyor/electron-39ng6) for Windows 32-bit builds.
+- [windows-ci.electronjs.org/project/AppVeyor/electron](https://windows-ci.electronjs.org/project/AppVeyor/electron) for Windows 64-bit builds.
 
 ## Compile release notes
 
@@ -66,7 +107,6 @@ Writing release notes is a good way to keep yourself busy while the builds are r
 For prior art, see existing releases on [the releases page].
 
 Tips:
-
 - Each listed item should reference a PR on electron/electron, not an issue, nor a PR from another repo like libcc.
 - No need to use link markup when referencing PRs. Strings like `#123` will automatically be converted to links on github.com.
 - To see the version of Chromium, V8, and Node in every version of Electron, visit [atom.io/download/electron/index.json](https://atom.io/download/electron/index.json).
@@ -75,7 +115,7 @@ Tips:
 
 For a `patch` release, use the following format:
 
-```
+```sh
 ## Bug Fixes
 
 * Fixed a cross-platform thing. #123
@@ -91,6 +131,16 @@ For a `patch` release, use the following format:
 ### Windows
 
 * Fixed a Windows thing. #1234
+```
+
+### Minor releases
+
+For a `minor` release, e.g. `1.8.0`, use this format:
+
+```sh
+## Upgrades
+
+- Upgraded from Node `oldVersion` to `newVersion`. #123
 
 ## API Changes
 
@@ -109,129 +159,153 @@ For a `patch` release, use the following format:
 * Changed a Windows thing. #123
 ```
 
-### Minor releases
-
-For a `minor` release (which is normally a Chromium update, and possibly also a Node update), e.g. `1.8.0`, use this format:
-
-```
-**Note:** This is a beta release. This is the first release running on upgraded versions of Chrome/Node.js/V8 and most likely will have have some instability and/or regressions.
-
-Please file new issues for any bugs you find in it.
-
-This release is published to [npm](https://www.npmjs.com/package/electron) under the `beta` tag and can be installed via `npm install electron@beta`.
-
+### Major releases
+```sh
 ## Upgrades
 
-- Upgraded from Chrome `oldVersion` to `newVersion`. #123
+- Upgraded from Chromium `oldVersion` to `newVersion`. #123
 - Upgraded from Node `oldVersion` to `newVersion`. #123
-- Upgraded from v8 `oldVersion` to `newVersion`. #9116
+
+## Breaking API changes
+
+* Changed a thing. #123
+
+### Linux
+
+* Changed a Linux thing. #123
+
+### macOS
+
+* Changed a macOS thing. #123
+
+### Windows
+
+* Changed a Windows thing. #123
 
 ## Other Changes
 
 - Some other change. #123
 ```
 
+### Beta releases
+Use the same formats as the ones suggested above, but add the following note at
+the beginning of the changelog:
+```sh
+**Note:** This is a beta release and most likely will have have some
+instability and/or regressions.
+
+Please file new issues for any bugs you find in it.
+
+This release is published to [npm](https://www.npmjs.com/package/electron)
+under the `beta` tag and can be installed via `npm install electron@beta`.
+```
+
+
 ## Edit the release draft
 
-1. Visit [the releases page] and you'll see a new draft release with placeholder release notes.
-1. Edit the release and add release notes.
-1. Ensure the `prerelease` checkbox is checked. This should happen automatically for Electron versions >=1.7
-1. Click 'Save draft'. **Do not click 'Publish release'!**
-1. Wait for all builds to pass before proceeding.
-
-## Merge temporary branch
-
-Merge the temporary branch back into master, without creating a merge commit:
-
+1. Visit [the releases page] and you'll see a new draft release with placeholder
+release notes.
+2. Edit the release and add release notes.
+3. Click 'Save draft'. **Do not click 'Publish release'!**
+4. Wait for all builds to pass before proceeding.
+5. In the branch, verify that the release's files have been created:
 ```sh
-git checkout master
-git merge release --no-commit
-git push origin master
+$ npm run release -- --validateRelease
 ```
-
-If this fails, rebase with master and rebuild:
-
-```sh
-git pull
-git checkout release
-git rebase master
-git push origin HEAD
-```
-
-## Run local debug build
-
-Run local debug build to verify that you are actually building the version you want. Sometimes you thought you were doing a release for a new version, but you're actually not.
-
-```sh
-npm run build
-npm start
-```
-
-Verify the window is displaying the current updated version.
-
-## Set environment variables
-
-You'll need to set the following environment variables to publish a release. Ask another team member for these credentials.
-
-- `ELECTRON_S3_BUCKET`
-- `ELECTRON_S3_ACCESS_KEY`
-- `ELECTRON_S3_SECRET_KEY`
-- `ELECTRON_GITHUB_TOKEN` - A personal access token with "repo" scope.
-
-You will only need to do this once.
+Note, if you need to run `--validateRelease` more than once to check the assets,
+run it as above the first time, then `node ./script/release.js --validateRelease`
+for subsequent calls so that you don't have to rebuild each time you want to
+check the assets.
 
 ## Publish the release
 
-This script will download the binaries and generate the node headers and the .lib linker used on Windows by node-gyp to build native modules.
+Once the merge has finished successfully, run the `release` script
+via `npm run release` to finish the release process. This script will do the
+following:
+1. Build the project to validate that the correct version number is being released.
+2. Download the binaries and generate the node headers and the .lib linker used
+on Windows by node-gyp to build native modules.
+3. Create and upload the SHASUMS files stored on S3 for the node files.
+4. Create and upload the SHASUMS256.txt file stored on the GitHub release.
+5. Validate that all of the required files are present on GitHub and S3 and have
+the correct checksums as specified in the SHASUMS files.
+6. Publish the release on GitHub
 
+## Publish to npm
+
+Before publishing to npm, you'll need to log into npm as Electron. Optionally,
+you may find [npmrc](https://www.npmjs.com/package/npmrc) to be a useful way
+to keep Electron's profile side-by-side with your own:
 ```sh
-npm run release
+$ sudo npm install -g npmrc
+$ npmrc -c electron
+Removing old .npmrc (default)
+Activating .npmrc "electron"
 ```
 
-Note: Many distributions of Python still ship with old HTTPS certificates. You may see a `InsecureRequestWarning`, but it can be disregarded.
-
-## Delete the temporary branch
-
+The Electron account's credentials are kept by GitHub in  a password manager.
+You'll also need to have access to an 2FA authenticator app with the appropriate OTP generator code to log in.
 ```sh
-git checkout master
-git branch -D release # delete local branch
-git push origin :release # delete remote branch
+$ npm login
+Username: electron-nightly
+Password: <This can be found under NPM Electron Nightly on LastPass>
+Email: (this IS public) electron@github.com
+```
+
+Publish the release to npm. Before running this you'll need to have set `ELECTRON_NPM_OTP` as an environment variable using a code from the aforementioned 2FA authenticator app.
+```sh
+$ npm whoami
+electron-nightly
+$ npm run publish-to-npm
+```
+
+After publishing, you can check the `latest` release:
+```sh
+$ npm dist-tag ls electron
+```
+
+If for some reason `npm run publish-to-npm` fails,
+you can tag the release manually:
+```sh
+$ npm dist-tag add electron@<version> <tag>
+```
+e.g.:
+```sh
+$ npm dist-tag add electron@2.0.0 latest
 ```
 
 [the releases page]: https://github.com/electron/electron/releases
 [this bump commit]: https://github.com/electron/electron/commit/78ec1b8f89b3886b856377a1756a51617bc33f5a
-[electron-versioning]: /docs/tutorial/electron-versioning.md
+[versioning]: /docs/tutorial/electron-versioning.md
 
-## Promote a release on npm
+# Troubleshooting
 
-New releases are published to npm with the `beta` tag. Every release should
-eventually get promoted to stable unless there's a good reason not to.
+## Rerun broken builds
 
-Releases are normally given around two weeks in the wild before being promoted.
-Before promoting a release, check to see if there are any bug reports
-against that version, e.g. issues labeled with `version/1.7.x`.
+If a release build fails for some reason, you can use `script/ci-release-build.js` to rerun a release build:
 
-It's also good to ask users in Slack if they're using the beta versions successfully.
-
-To see what's beta and stable at any given time:
-
-```
-$ npm dist-tag ls electron
-beta: 1.7.5
-latest: 1.6.11
+### Rerun all linux builds:
+```sh
+node script/ci-release-build.js --ci=CircleCI --ghRelease TARGET_BRANCH
+(TARGET_BRANCH) is the branch you are releasing from.
 ```
 
-To promote a beta version to stable (aka `latest`):
-
+### Rerun all macOS builds:
+```sh
+node script/ci-release-build.js --ci=VSTS --ghRelease TARGET_BRANCH
+(TARGET_BRANCH) is the branch you are releasing from.
 ```
-npm dist-tag add electron@1.2.3 latest
+
+### Rerun all Windows builds:
+```sh
+node script/ci-release-build.js --ci=AppVeyor --ghRelease TARGET_BRANCH
+(TARGET_BRANCH) is the branch you are releasing from.
 ```
 
-Then edit the release on GitGub:
-
-1. Remove `beta` from the release name: electron v1.7.5 ~~beta~~
-1. Uncheck the `prerelease` checkbox.
-1. Click "Update release"
+Additionally you can pass a job name to the script to run an individual job, eg:
+```sh
+node script/ci-release-build.js --ci=AppVeyor --ghRelease --job=electron-x64 TARGET_BRANCH
+```
 
 ## Fix missing binaries of a release manually
 
@@ -246,16 +320,23 @@ Then manually create distributions for each platform and upload them:
 
 ```sh
 # Checkout the version to re-upload.
-git checkout vTHE.RELEASE.VERSION
+git checkout vX.Y.Z
 
-# Do release build, specifying one target architecture.
-./script/bootstrap.py --target_arch [arm|x64|ia32]
-./script/build.py -c R
-./script/create-dist.py
+# Create release build
+gn gen out/Release --args="import(\"//electron/build/args/release.gn\") $GN_EXTRA_ARGS"
 
-# Explicitly allow overwritting a published release.
+# To compile for specific arch, instead set
+gn gen out/Release-<TARGET_ARCH> --args='import(\"//electron/build/args/release.gn\") target_cpu = "[arm|x64|ia32]"'
+
+# Build by running ninja with the electron target
+ninja -C out/Release electron
+ninja -C out/Release electron:dist_zip
+
+# Explicitly allow overwriting a published release.
 ./script/upload.py --overwrite
 ```
+
+Allowable values for [target_cpu](https://gn.googlesource.com/gn/+/master/docs/reference.md#built_in-predefined-variables-target_cpu_the-desired-cpu-architecture-for-the-build-possible-values) and [target_os](https://gn.googlesource.com/gn/+/master/docs/reference.md#built_in-predefined-variables-target_os_the-desired-operating-system-for-the-build-possible-values).
 
 After re-uploading all distributions, publish again to upload the checksum
 file:

@@ -4,7 +4,8 @@
 
 #include "atom/browser/native_browser_view_mac.h"
 
-#include "brightray/browser/inspectable_web_contents_view.h"
+#include "atom/browser/ui/inspectable_web_contents.h"
+#include "atom/browser/ui/inspectable_web_contents_view.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -14,53 +15,59 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 
 @interface DragRegionView : NSView
 
-@property (assign) NSPoint initialLocation;
+@property(assign) NSPoint initialLocation;
 
 @end
 
 @interface NSWindow ()
-- (void)performWindowDragWithEvent:(NSEvent *)event;
+- (void)performWindowDragWithEvent:(NSEvent*)event;
 @end
 
 @implementation DragRegionView
 
-- (BOOL)mouseDownCanMoveWindow
-{
+@synthesize initialLocation;
+
+- (BOOL)mouseDownCanMoveWindow {
   return NO;
 }
 
-- (NSView *)hitTest:(NSPoint)aPoint
-{
-    // Pass-through events that don't hit one of the exclusion zones
-    for (NSView *exlusion_zones in [self subviews]) {
-      if ([exlusion_zones hitTest:aPoint])
-        return nil;
-    }
+- (NSView*)hitTest:(NSPoint)aPoint {
+  // Pass-through events that don't hit one of the exclusion zones
+  for (NSView* exlusion_zones in [self subviews]) {
+    if ([exlusion_zones hitTest:aPoint])
+      return nil;
+  }
 
-    return self;
+  return self;
 }
 
-- (void)mouseDown:(NSEvent *)event
-{
+- (void)mouseDown:(NSEvent*)event {
   if ([self.window respondsToSelector:@selector(performWindowDragWithEvent)]) {
-    [self.window performWindowDragWithEvent:event];
+    // According to Google, using performWindowDragWithEvent:
+    // does not generate a NSWindowWillMoveNotification. Hence post one.
+    [[NSNotificationCenter defaultCenter]
+        postNotificationName:NSWindowWillMoveNotification
+                      object:self];
+
+    if (@available(macOS 10.11, *)) {
+      [self.window performWindowDragWithEvent:event];
+    }
     return;
   }
 
-  if (self.window.styleMask & NSFullScreenWindowMask) {
+  if (self.window.styleMask & NSWindowStyleMaskFullScreen) {
     return;
   }
 
   self.initialLocation = [event locationInWindow];
 }
 
-- (void)mouseDragged:(NSEvent *)theEvent
-{
+- (void)mouseDragged:(NSEvent*)theEvent {
   if ([self.window respondsToSelector:@selector(performWindowDragWithEvent)]) {
     return;
   }
 
-  if (self.window.styleMask & NSFullScreenWindowMask) {
+  if (self.window.styleMask & NSWindowStyleMaskFullScreen) {
     return;
   }
 
@@ -68,14 +75,47 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
   NSPoint newOrigin;
 
   NSRect screenFrame = [[NSScreen mainScreen] frame];
+  NSSize screenSize = screenFrame.size;
   NSRect windowFrame = [self.window frame];
+  NSSize windowSize = windowFrame.size;
 
   newOrigin.x = currentLocation.x - self.initialLocation.x;
   newOrigin.y = currentLocation.y - self.initialLocation.y;
 
+  BOOL inMenuBar = (newOrigin.y + windowSize.height) >
+                   (screenFrame.origin.y + screenSize.height);
+  BOOL screenAboveMainScreen = false;
+
+  if (inMenuBar) {
+    for (NSScreen* screen in [NSScreen screens]) {
+      NSRect currentScreenFrame = [screen frame];
+      BOOL isHigher = currentScreenFrame.origin.y > screenFrame.origin.y;
+
+      // If there's another screen that is generally above the current screen,
+      // we'll draw a new rectangle that is just above the current screen. If
+      // the "higher" screen intersects with this rectangle, we'll allow drawing
+      // above the menubar.
+      if (isHigher) {
+        NSRect aboveScreenRect =
+            NSMakeRect(screenFrame.origin.x,
+                       screenFrame.origin.y + screenFrame.size.height - 10,
+                       screenFrame.size.width, 200);
+
+        BOOL screenAboveIntersects =
+            NSIntersectsRect(currentScreenFrame, aboveScreenRect);
+
+        if (screenAboveIntersects) {
+          screenAboveMainScreen = true;
+          break;
+        }
+      }
+    }
+  }
+
   // Don't let window get dragged up under the menu bar
-  if ((newOrigin.y + windowFrame.size.height) > (screenFrame.origin.y + screenFrame.size.height)) {
-    newOrigin.y = screenFrame.origin.y + (screenFrame.size.height - windowFrame.size.height);
+  if (inMenuBar && !screenAboveMainScreen) {
+    newOrigin.y = screenFrame.origin.y +
+                  (screenFrame.size.height - windowFrame.size.height);
   }
 
   // Move the window to the new location
@@ -118,9 +158,10 @@ const NSAutoresizingMaskOptions kDefaultAutoResizingMask =
 namespace atom {
 
 NativeBrowserViewMac::NativeBrowserViewMac(
-    brightray::InspectableWebContentsView* web_contents_view)
-    : NativeBrowserView(web_contents_view) {
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+    InspectableWebContents* inspectable_web_contents)
+    : NativeBrowserView(inspectable_web_contents) {
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   view.autoresizingMask = kDefaultAutoResizingMask;
 }
 
@@ -134,13 +175,23 @@ void NativeBrowserViewMac::SetAutoResizeFlags(uint8_t flags) {
   if (flags & kAutoResizeHeight) {
     autoresizing_mask |= NSViewHeightSizable;
   }
+  if (flags & kAutoResizeHorizontal) {
+    autoresizing_mask |=
+        NSViewMaxXMargin | NSViewMinXMargin | NSViewWidthSizable;
+  }
+  if (flags & kAutoResizeVertical) {
+    autoresizing_mask |=
+        NSViewMaxYMargin | NSViewMinYMargin | NSViewHeightSizable;
+  }
 
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   view.autoresizingMask = autoresizing_mask;
 }
 
 void NativeBrowserViewMac::SetBounds(const gfx::Rect& bounds) {
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   auto* superview = view.superview;
   const auto superview_height = superview ? superview.frame.size.height : 0;
   view.frame =
@@ -149,68 +200,54 @@ void NativeBrowserViewMac::SetBounds(const gfx::Rect& bounds) {
 }
 
 void NativeBrowserViewMac::SetBackgroundColor(SkColor color) {
-  auto* view = GetInspectableWebContentsView()->GetNativeView();
+  auto* view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
   view.wantsLayer = YES;
   view.layer.backgroundColor = skia::CGColorCreateFromSkColor(color);
 }
 
 void NativeBrowserViewMac::UpdateDraggableRegions(
-    const std::vector<gfx::Rect>& system_drag_exclude_areas) {
-  NSView* webView = GetInspectableWebContentsView()->GetNativeView();
+    const std::vector<gfx::Rect>& drag_exclude_rects) {
+  NSView* web_view = GetWebContents()->GetNativeView().GetNativeNSView();
+  NSView* inspectable_view =
+      GetInspectableWebContentsView()->GetNativeView().GetNativeNSView();
+  NSView* window_content_view = inspectable_view.superview;
+  const auto window_content_view_height = NSHeight(window_content_view.bounds);
 
-  NSInteger superViewHeight = NSHeight([webView.superview bounds]);
-  NSInteger webViewHeight = NSHeight([webView bounds]);
-  NSInteger webViewWidth = NSWidth([webView bounds]);
-  NSInteger webViewX = NSMinX([webView frame]);
-  NSInteger webViewY = 0;
-
-  // Apple's NSViews have their coordinate system originate at the bottom left,
-  // meaning that we need to be a bit smarter when it comes to calculating our
-  // current top offset
-  if (webViewHeight > superViewHeight) {
-    webViewY = std::abs(webViewHeight - superViewHeight - (std::abs(NSMinY([webView frame]))));
-  } else {
-    webViewY = superViewHeight - NSMaxY([webView frame]);
-  }
-
-  // Remove all DraggableRegionViews that are added last time.
-  // Note that [webView subviews] returns the view's mutable internal array and
-  // it should be copied to avoid mutating the original array while enumerating
-  // it.
-  base::scoped_nsobject<NSArray> subviews([[webView subviews] copy]);
-  for (NSView* subview in subviews.get())
-    if ([subview isKindOfClass:[DragRegionView class]])
+  // Remove all DragRegionViews that were added last time. Note that we need
+  // to copy the `subviews` array to avoid mutation during iteration.
+  base::scoped_nsobject<NSArray> subviews([[web_view subviews] copy]);
+  for (NSView* subview in subviews.get()) {
+    if ([subview isKindOfClass:[DragRegionView class]]) {
       [subview removeFromSuperview];
+    }
+  }
 
   // Create one giant NSView that is draggable.
-  base::scoped_nsobject<NSView> dragRegion(
-        [[DragRegionView alloc] initWithFrame:NSZeroRect]);
-    [dragRegion setFrame:NSMakeRect(0,
-                                    0,
-                                    webViewWidth,
-                                    webViewHeight)];
+  base::scoped_nsobject<NSView> drag_region_view(
+      [[DragRegionView alloc] initWithFrame:web_view.bounds]);
+  [web_view addSubview:drag_region_view];
 
   // Then, on top of that, add "exclusion zones"
-  for (auto iter = system_drag_exclude_areas.begin();
-       iter != system_drag_exclude_areas.end();
-       ++iter) {
-    base::scoped_nsobject<NSView> controlRegion(
-        [[ExcludeDragRegionView alloc] initWithFrame:NSZeroRect]);
-    [controlRegion setFrame:NSMakeRect(iter->x() - webViewX,
-                                       webViewHeight - iter->bottom() + webViewY,
-                                       iter->width(),
-                                       iter->height())];
-    [dragRegion addSubview:controlRegion];
-  }
+  for (const auto& rect : drag_exclude_rects) {
+    const auto window_content_view_exclude_rect =
+        NSMakeRect(rect.x(), window_content_view_height - rect.bottom(),
+                   rect.width(), rect.height());
+    const auto drag_region_view_exclude_rect =
+        [window_content_view convertRect:window_content_view_exclude_rect
+                                  toView:drag_region_view];
 
-  // Add the DragRegion to the WebView
-  [webView addSubview:dragRegion];
+    base::scoped_nsobject<NSView> exclude_drag_region_view(
+        [[ExcludeDragRegionView alloc]
+            initWithFrame:drag_region_view_exclude_rect]);
+    [drag_region_view addSubview:exclude_drag_region_view];
+  }
 }
 
 // static
 NativeBrowserView* NativeBrowserView::Create(
-    brightray::InspectableWebContentsView* web_contents_view) {
-  return new NativeBrowserViewMac(web_contents_view);
+    InspectableWebContents* inspectable_web_contents) {
+  return new NativeBrowserViewMac(inspectable_web_contents);
 }
 
 }  // namespace atom

@@ -4,7 +4,15 @@
 
 #include "atom/browser/browser.h"
 #include "atom/browser/native_window_views.h"
+#include "atom/browser/ui/views/root_view.h"
+#include "atom/common/atom_constants.h"
 #include "content/public/browser/browser_accessibility_state.h"
+#include "ui/base/win/accessibility_misc_utils.h"
+#include "ui/display/win/screen_win.h"
+#include "ui/gfx/geometry/insets.h"
+
+// Must be included after other Windows headers.
+#include <UIAutomationCoreApi.h>
 
 namespace atom {
 
@@ -13,58 +21,110 @@ namespace {
 // Convert Win32 WM_APPCOMMANDS to strings.
 const char* AppCommandToString(int command_id) {
   switch (command_id) {
-    case APPCOMMAND_BROWSER_BACKWARD       : return "browser-backward";
-    case APPCOMMAND_BROWSER_FORWARD        : return "browser-forward";
-    case APPCOMMAND_BROWSER_REFRESH        : return "browser-refresh";
-    case APPCOMMAND_BROWSER_STOP           : return "browser-stop";
-    case APPCOMMAND_BROWSER_SEARCH         : return "browser-search";
-    case APPCOMMAND_BROWSER_FAVORITES      : return "browser-favorites";
-    case APPCOMMAND_BROWSER_HOME           : return "browser-home";
-    case APPCOMMAND_VOLUME_MUTE            : return "volume-mute";
-    case APPCOMMAND_VOLUME_DOWN            : return "volume-down";
-    case APPCOMMAND_VOLUME_UP              : return "volume-up";
-    case APPCOMMAND_MEDIA_NEXTTRACK        : return "media-nexttrack";
-    case APPCOMMAND_MEDIA_PREVIOUSTRACK    : return "media-previoustrack";
-    case APPCOMMAND_MEDIA_STOP             : return "media-stop";
-    case APPCOMMAND_MEDIA_PLAY_PAUSE       : return "media-play_pause";
-    case APPCOMMAND_LAUNCH_MAIL            : return "launch-mail";
-    case APPCOMMAND_LAUNCH_MEDIA_SELECT    : return "launch-media-select";
-    case APPCOMMAND_LAUNCH_APP1            : return "launch-app1";
-    case APPCOMMAND_LAUNCH_APP2            : return "launch-app2";
-    case APPCOMMAND_BASS_DOWN              : return "bass-down";
-    case APPCOMMAND_BASS_BOOST             : return "bass-boost";
-    case APPCOMMAND_BASS_UP                : return "bass-up";
-    case APPCOMMAND_TREBLE_DOWN            : return "treble-down";
-    case APPCOMMAND_TREBLE_UP              : return "treble-up";
-    case APPCOMMAND_MICROPHONE_VOLUME_MUTE : return "microphone-volume-mute";
-    case APPCOMMAND_MICROPHONE_VOLUME_DOWN : return "microphone-volume-down";
-    case APPCOMMAND_MICROPHONE_VOLUME_UP   : return "microphone-volume-up";
-    case APPCOMMAND_HELP                   : return "help";
-    case APPCOMMAND_FIND                   : return "find";
-    case APPCOMMAND_NEW                    : return "new";
-    case APPCOMMAND_OPEN                   : return "open";
-    case APPCOMMAND_CLOSE                  : return "close";
-    case APPCOMMAND_SAVE                   : return "save";
-    case APPCOMMAND_PRINT                  : return "print";
-    case APPCOMMAND_UNDO                   : return "undo";
-    case APPCOMMAND_REDO                   : return "redo";
-    case APPCOMMAND_COPY                   : return "copy";
-    case APPCOMMAND_CUT                    : return "cut";
-    case APPCOMMAND_PASTE                  : return "paste";
-    case APPCOMMAND_REPLY_TO_MAIL          : return "reply-to-mail";
-    case APPCOMMAND_FORWARD_MAIL           : return "forward-mail";
-    case APPCOMMAND_SEND_MAIL              : return "send-mail";
-    case APPCOMMAND_SPELL_CHECK            : return "spell-check";
-    case APPCOMMAND_MIC_ON_OFF_TOGGLE      : return "mic-on-off-toggle";
-    case APPCOMMAND_CORRECTION_LIST        : return "correction-list";
-    case APPCOMMAND_MEDIA_PLAY             : return "media-play";
-    case APPCOMMAND_MEDIA_PAUSE            : return "media-pause";
-    case APPCOMMAND_MEDIA_RECORD           : return "media-record";
-    case APPCOMMAND_MEDIA_FAST_FORWARD     : return "media-fast-forward";
-    case APPCOMMAND_MEDIA_REWIND           : return "media-rewind";
-    case APPCOMMAND_MEDIA_CHANNEL_UP       : return "media-channel-up";
-    case APPCOMMAND_MEDIA_CHANNEL_DOWN     : return "media-channel-down";
-    case APPCOMMAND_DELETE                 : return "delete";
+    case APPCOMMAND_BROWSER_BACKWARD:
+      return kBrowserBackward;
+    case APPCOMMAND_BROWSER_FORWARD:
+      return kBrowserForward;
+    case APPCOMMAND_BROWSER_REFRESH:
+      return "browser-refresh";
+    case APPCOMMAND_BROWSER_STOP:
+      return "browser-stop";
+    case APPCOMMAND_BROWSER_SEARCH:
+      return "browser-search";
+    case APPCOMMAND_BROWSER_FAVORITES:
+      return "browser-favorites";
+    case APPCOMMAND_BROWSER_HOME:
+      return "browser-home";
+    case APPCOMMAND_VOLUME_MUTE:
+      return "volume-mute";
+    case APPCOMMAND_VOLUME_DOWN:
+      return "volume-down";
+    case APPCOMMAND_VOLUME_UP:
+      return "volume-up";
+    case APPCOMMAND_MEDIA_NEXTTRACK:
+      return "media-nexttrack";
+    case APPCOMMAND_MEDIA_PREVIOUSTRACK:
+      return "media-previoustrack";
+    case APPCOMMAND_MEDIA_STOP:
+      return "media-stop";
+    case APPCOMMAND_MEDIA_PLAY_PAUSE:
+      return "media-play-pause";
+    case APPCOMMAND_LAUNCH_MAIL:
+      return "launch-mail";
+    case APPCOMMAND_LAUNCH_MEDIA_SELECT:
+      return "launch-media-select";
+    case APPCOMMAND_LAUNCH_APP1:
+      return "launch-app1";
+    case APPCOMMAND_LAUNCH_APP2:
+      return "launch-app2";
+    case APPCOMMAND_BASS_DOWN:
+      return "bass-down";
+    case APPCOMMAND_BASS_BOOST:
+      return "bass-boost";
+    case APPCOMMAND_BASS_UP:
+      return "bass-up";
+    case APPCOMMAND_TREBLE_DOWN:
+      return "treble-down";
+    case APPCOMMAND_TREBLE_UP:
+      return "treble-up";
+    case APPCOMMAND_MICROPHONE_VOLUME_MUTE:
+      return "microphone-volume-mute";
+    case APPCOMMAND_MICROPHONE_VOLUME_DOWN:
+      return "microphone-volume-down";
+    case APPCOMMAND_MICROPHONE_VOLUME_UP:
+      return "microphone-volume-up";
+    case APPCOMMAND_HELP:
+      return "help";
+    case APPCOMMAND_FIND:
+      return "find";
+    case APPCOMMAND_NEW:
+      return "new";
+    case APPCOMMAND_OPEN:
+      return "open";
+    case APPCOMMAND_CLOSE:
+      return "close";
+    case APPCOMMAND_SAVE:
+      return "save";
+    case APPCOMMAND_PRINT:
+      return "print";
+    case APPCOMMAND_UNDO:
+      return "undo";
+    case APPCOMMAND_REDO:
+      return "redo";
+    case APPCOMMAND_COPY:
+      return "copy";
+    case APPCOMMAND_CUT:
+      return "cut";
+    case APPCOMMAND_PASTE:
+      return "paste";
+    case APPCOMMAND_REPLY_TO_MAIL:
+      return "reply-to-mail";
+    case APPCOMMAND_FORWARD_MAIL:
+      return "forward-mail";
+    case APPCOMMAND_SEND_MAIL:
+      return "send-mail";
+    case APPCOMMAND_SPELL_CHECK:
+      return "spell-check";
+    case APPCOMMAND_MIC_ON_OFF_TOGGLE:
+      return "mic-on-off-toggle";
+    case APPCOMMAND_CORRECTION_LIST:
+      return "correction-list";
+    case APPCOMMAND_MEDIA_PLAY:
+      return "media-play";
+    case APPCOMMAND_MEDIA_PAUSE:
+      return "media-pause";
+    case APPCOMMAND_MEDIA_RECORD:
+      return "media-record";
+    case APPCOMMAND_MEDIA_FAST_FORWARD:
+      return "media-fast-forward";
+    case APPCOMMAND_MEDIA_REWIND:
+      return "media-rewind";
+    case APPCOMMAND_MEDIA_CHANNEL_UP:
+      return "media-channel-up";
+    case APPCOMMAND_MEDIA_CHANNEL_DOWN:
+      return "media-channel-down";
+    case APPCOMMAND_DELETE:
+      return "delete";
     case APPCOMMAND_DICTATE_OR_COMMAND_CONTROL_TOGGLE:
       return "dictate-or-command-control-toggle";
     default:
@@ -85,12 +145,15 @@ HHOOK NativeWindowViews::mouse_hook_ = NULL;
 
 bool NativeWindowViews::ExecuteWindowsCommand(int command_id) {
   std::string command = AppCommandToString(command_id);
-  NotifyWindowExecuteWindowsCommand(command);
+  NotifyWindowExecuteAppCommand(command);
+
   return false;
 }
 
-bool NativeWindowViews::PreHandleMSG(
-    UINT message, WPARAM w_param, LPARAM l_param, LRESULT* result) {
+bool NativeWindowViews::PreHandleMSG(UINT message,
+                                     WPARAM w_param,
+                                     LPARAM l_param,
+                                     LRESULT* result) {
   NotifyWindowMessage(message, w_param, l_param);
 
   switch (message) {
@@ -100,11 +163,12 @@ bool NativeWindowViews::PreHandleMSG(
     // because we still want Chromium to handle returning the actual
     // accessibility object.
     case WM_GETOBJECT: {
-      if (checked_for_a11y_support_) return false;
+      if (checked_for_a11y_support_)
+        return false;
 
       const DWORD obj_id = static_cast<DWORD>(l_param);
 
-      if (obj_id != OBJID_CLIENT) {
+      if (obj_id != static_cast<DWORD>(OBJID_CLIENT)) {
         return false;
       }
 
@@ -114,7 +178,7 @@ bool NativeWindowViews::PreHandleMSG(
 
       checked_for_a11y_support_ = true;
 
-      const auto axState = content::BrowserAccessibilityState::GetInstance();
+      auto* const axState = content::BrowserAccessibilityState::GetInstance();
       if (axState && !axState->IsAccessibleBrowser()) {
         axState->OnScreenReaderDetected();
         Browser::Get()->OnAccessibilitySupportChanged();
@@ -122,11 +186,64 @@ bool NativeWindowViews::PreHandleMSG(
 
       return false;
     }
+    case WM_GETMINMAXINFO: {
+      WINDOWPLACEMENT wp;
+      wp.length = sizeof(WINDOWPLACEMENT);
+
+      // We do this to work around a Windows bug, where the minimized Window
+      // would report that the closest display to it is not the one that it was
+      // previously on (but the leftmost one instead). We restore the position
+      // of the window during the restore operation, this way chromium can
+      // use the proper display to calculate the scale factor to use.
+      if (!last_normal_placement_bounds_.IsEmpty() &&
+          GetWindowPlacement(GetAcceleratedWidget(), &wp)) {
+        last_normal_placement_bounds_.set_size(gfx::Size(0, 0));
+        wp.rcNormalPosition = last_normal_placement_bounds_.ToRECT();
+        SetWindowPlacement(GetAcceleratedWidget(), &wp);
+
+        last_normal_placement_bounds_ = gfx::Rect();
+      }
+
+      return false;
+    }
+    case WM_NCCALCSIZE: {
+      if (!has_frame() && w_param == TRUE) {
+        NCCALCSIZE_PARAMS* params =
+            reinterpret_cast<NCCALCSIZE_PARAMS*>(l_param);
+        RECT PROPOSED = params->rgrc[0];
+        RECT BEFORE = params->rgrc[1];
+
+        // We need to call the default to have cascade and tile windows
+        // working
+        // (https://github.com/rossy/borderless-window/blob/master/borderless-window.c#L239),
+        // but we need to provide the proposed original value as suggested in
+        // https://blogs.msdn.microsoft.com/wpfsdk/2008/09/08/custom-window-chrome-in-wpf/
+        DefWindowProcW(GetAcceleratedWidget(), WM_NCCALCSIZE, w_param, l_param);
+
+        params->rgrc[0] = PROPOSED;
+        params->rgrc[1] = BEFORE;
+
+        return true;
+      } else {
+        return false;
+      }
+    }
     case WM_COMMAND:
       // Handle thumbar button click message.
       if (HIWORD(w_param) == THBN_CLICKED)
         return taskbar_host_.HandleThumbarButtonEvent(LOWORD(w_param));
       return false;
+    case WM_SIZING: {
+      bool prevent_default = false;
+      NotifyWindowWillResize(gfx::Rect(*reinterpret_cast<RECT*>(l_param)),
+                             &prevent_default);
+      if (prevent_default) {
+        ::GetWindowRect(GetAcceleratedWidget(),
+                        reinterpret_cast<RECT*>(l_param));
+        return true;  // Tells Windows that the Sizing is handled.
+      }
+      return false;
+    }
     case WM_SIZE: {
       // Handle window state change.
       HandleSizeEvent(w_param, l_param);
@@ -137,8 +254,16 @@ bool NativeWindowViews::PreHandleMSG(
       return false;
     }
     case WM_MOVING: {
-      if (!movable_)
-        ::GetWindowRect(GetAcceleratedWidget(), (LPRECT)l_param);
+      bool prevent_default = false;
+      NotifyWindowWillMove(gfx::Rect(*reinterpret_cast<RECT*>(l_param)),
+                           &prevent_default);
+      if (!movable_ || prevent_default) {
+        ::GetWindowRect(GetAcceleratedWidget(),
+                        reinterpret_cast<RECT*>(l_param));
+        return true;  // Tells Windows that the Move is handled. If not true,
+                      // frameless windows can be moved using
+                      // -webkit-app-region: drag elements.
+      }
       return false;
     }
     case WM_MOVE: {
@@ -160,8 +285,12 @@ bool NativeWindowViews::PreHandleMSG(
       if (LOWORD(w_param) == WM_CREATE) {
         // Because of reasons regarding legacy drivers and stuff, a window that
         // matches the client area is created and used internally by Chromium.
-        // This is used when forwarding mouse messages.
-        legacy_window_ = reinterpret_cast<HWND>(l_param);
+        // This is used when forwarding mouse messages. We only cache the first
+        // occurrence (the webview window) because dev tools also cause this
+        // message to be sent.
+        if (!legacy_window_) {
+          legacy_window_ = reinterpret_cast<HWND>(l_param);
+        }
       }
       return false;
     }
@@ -174,15 +303,40 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
   // Here we handle the WM_SIZE event in order to figure out what is the current
   // window state and notify the user accordingly.
   switch (w_param) {
-    case SIZE_MAXIMIZED:
+    case SIZE_MAXIMIZED: {
+      // Frameless maximized windows are size compensated by Windows for a
+      // border that's not actually there, so we must conter-compensate.
+      // https://blogs.msdn.microsoft.com/wpfsdk/2008/09/08/custom-window-chrome-in-wpf/
+      if (!has_frame()) {
+        float scale_factor = display::win::ScreenWin::GetScaleFactorForHWND(
+            GetAcceleratedWidget());
+
+        int border =
+            GetSystemMetrics(SM_CXFRAME) + GetSystemMetrics(SM_CXPADDEDBORDER);
+        if (!thick_frame_) {
+          border -= GetSystemMetrics(SM_CXBORDER);
+        }
+        root_view_->SetInsets(gfx::Insets(border).Scale(1.0f / scale_factor));
+      }
+
       last_window_state_ = ui::SHOW_STATE_MAXIMIZED;
       if (consecutive_moves_) {
         last_normal_bounds_ = last_normal_bounds_before_move_;
       }
+
       NotifyWindowMaximize();
       break;
+    }
     case SIZE_MINIMIZED:
       last_window_state_ = ui::SHOW_STATE_MINIMIZED;
+
+      WINDOWPLACEMENT wp;
+      wp.length = sizeof(WINDOWPLACEMENT);
+
+      if (GetWindowPlacement(GetAcceleratedWidget(), &wp)) {
+        last_normal_placement_bounds_ = gfx::Rect(wp.rcNormalPosition);
+      }
+
       NotifyWindowMinimize();
       break;
     case SIZE_RESTORED:
@@ -194,10 +348,7 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
         switch (last_window_state_) {
           case ui::SHOW_STATE_MAXIMIZED:
             last_window_state_ = ui::SHOW_STATE_NORMAL;
-
-            // Don't force out last known bounds onto the window as Windows
-            // actually gets these correct
-
+            root_view_->SetInsets(gfx::Insets(0));
             NotifyWindowUnmaximize();
             break;
           case ui::SHOW_STATE_MINIMIZED:
@@ -209,10 +360,14 @@ void NativeWindowViews::HandleSizeEvent(WPARAM w_param, LPARAM l_param) {
 
               // When the window is restored we resize it to the previous known
               // normal size.
-              SetBounds(last_normal_bounds_, false);
+              if (has_frame()) {
+                SetBounds(last_normal_bounds_, false);
+              }
 
               NotifyWindowRestore();
             }
+            break;
+          default:
             break;
         }
       }
@@ -227,8 +382,8 @@ void NativeWindowViews::SetForwardMouseMessages(bool forward) {
 
     // Subclassing is used to fix some issues when forwarding mouse messages;
     // see comments in |SubclassProc|.
-    SetWindowSubclass(
-      legacy_window_, SubclassProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    SetWindowSubclass(legacy_window_, SubclassProc, 1,
+                      reinterpret_cast<DWORD_PTR>(this));
 
     if (!mouse_hook_) {
       mouse_hook_ = SetWindowsHookEx(WH_MOUSE_LL, MouseHookProc, NULL, 0);
@@ -246,9 +401,12 @@ void NativeWindowViews::SetForwardMouseMessages(bool forward) {
   }
 }
 
-LRESULT CALLBACK NativeWindowViews::SubclassProc(
-    HWND hwnd, UINT msg, WPARAM w_param, LPARAM l_param, UINT_PTR subclass_id,
-    DWORD_PTR ref_data) {
+LRESULT CALLBACK NativeWindowViews::SubclassProc(HWND hwnd,
+                                                 UINT msg,
+                                                 WPARAM w_param,
+                                                 LPARAM l_param,
+                                                 UINT_PTR subclass_id,
+                                                 DWORD_PTR ref_data) {
   NativeWindowViews* window = reinterpret_cast<NativeWindowViews*>(ref_data);
   switch (msg) {
     case WM_MOUSELEAVE: {
@@ -272,8 +430,9 @@ LRESULT CALLBACK NativeWindowViews::SubclassProc(
   return DefSubclassProc(hwnd, msg, w_param, l_param);
 }
 
-LRESULT CALLBACK NativeWindowViews::MouseHookProc(
-    int n_code, WPARAM w_param, LPARAM l_param) {
+LRESULT CALLBACK NativeWindowViews::MouseHookProc(int n_code,
+                                                  WPARAM w_param,
+                                                  LPARAM l_param) {
   if (n_code < 0) {
     return CallNextHookEx(NULL, n_code, w_param, l_param);
   }
@@ -282,7 +441,7 @@ LRESULT CALLBACK NativeWindowViews::MouseHookProc(
   // the cursor since they are in a state where they would otherwise ignore all
   // mouse input.
   if (w_param == WM_MOUSEMOVE) {
-    for (auto window : forwarding_windows_) {
+    for (auto* window : forwarding_windows_) {
       // At first I considered enumerating windows to check whether the cursor
       // was directly above the window, but since nothing bad seems to happen
       // if we post the message even if some other window occludes it I have
