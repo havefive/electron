@@ -57,7 +57,7 @@ Stabilization branches are branches that run parallel to master, taking in only 
 
 ![](../images/versioning-sketch-1.png)
 
-Stabilization branches are always either **major** or **minor** version lines, and named against the following template `$MAJOR-$MINOR-x` e.g. `2-0-x`.
+Since Electron 8, stabilization branches are always **major** version lines, and named against the following template `$MAJOR-x-y` e.g. `8-x-y`.  Prior to that we used **minor** version lines and named them as `$MAJOR-$MINOR-x` e.g. `2-0-x`
 
 We allow for multiple stabilization branches to exist simultaneously, and intend to support at least two in parallel at all times, backporting security fixes as necessary.
 ![](../images/versioning-sketch-2.png)
@@ -87,13 +87,13 @@ e.g. `2.0.1`.
 
 Specifically, the above means:
 
-1. Admitting non-breaking-API changes early in the beta cycle is okay, even if those changes have the potential to cause moderate side-affects
+1. Admitting non-breaking-API changes before Week 3 in the beta cycle is okay, even if those changes have the potential to cause moderate side-effects
 2. Admitting feature-flagged changes, that do not otherwise alter existing code paths, at most points in the beta cycle is okay. Users can explicitly enable those flags in their apps.
-3. Admitting features of any sort very late in the beta cycle is 👎 without a very good reason.
+3. Admitting features of any sort after Week 3 in the beta cycle is 👎 without a very good reason.
 
 For each major and minor bump, you should expect to see something like the following:
 
-```text
+```plaintext
 2.0.0-beta.1
 2.0.0-beta.2
 2.0.0-beta.3
@@ -139,7 +139,7 @@ We seek to increase clarity at all levels of the update and releases process. St
 * Commits that would result in a semver **minor** bump must start with `feat:`.
 * Commits that would result in a semver **patch** bump must start with `fix:`.
 
-* We allow squashing of commits, provided that the squashed message adheres the the above message format.
+* We allow squashing of commits, provided that the squashed message adheres to the above message format.
 * It is acceptable for some commits in a pull request to not include a semantic prefix, as long as the pull request title contains a meaningful encompassing semantic message.
 
 # Versioned `master`

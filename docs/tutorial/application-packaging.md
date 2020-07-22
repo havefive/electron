@@ -70,7 +70,7 @@ fs.readdirSync('/path/to/example.asar')
 Use a module from the archive:
 
 ```javascript
-require('/path/to/example.asar/dir/module.js')
+require('./path/to/example.asar/dir/module.js')
 ```
 
 You can also display a web page in an `asar` archive with `BrowserWindow`:
@@ -189,7 +189,7 @@ was created together with the `app.asar` file. It contains the unpacked files
 and should be shipped together with the `app.asar` archive.
 
 [asar]: https://github.com/electron/asar
-[electron-packager]: https://github.com/electron-userland/electron-packager
+[electron-packager]: https://github.com/electron/electron-packager
 [electron-forge]: https://github.com/electron-userland/electron-forge
 [electron-builder]: https://github.com/electron-userland/electron-builder
 
